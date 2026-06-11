@@ -1,0 +1,36 @@
+{
+  "id": "checkout_example",
+  "createdAt": "2024-02-27T00:00:00.000Z",
+  "product": {
+    "name": "Taxa de Cadastro",
+    "description": "Essa taxa será reembolsada 100% após o saque",
+    "price": 24.56,
+    "image": "https://cdn.optimuspay.io/products/uploads/019c3e60-2266-71ae-9908-a0a466a82fd1.png"
+  },
+  "store": {
+    "name": "Tik Tok",
+    "logo": "./img_6988cc48b4e0b7.png",
+    "cnpj": "27.415.911/0001-36",
+    "email": "tiktokpay@contato.com"
+  },
+  "testimonials": [
+    {
+      "name": "TikTok Brasil",
+      "image": "https://cdn.optimuspay.io/stores/6966/theme/img_6988ceb3d04ca9.16287872.webp",
+      "stars": 5,
+      "text": "+ de 287.983 Recompensas foram enviadas."
+    },
+    {
+      "name": "Luana Silva",
+      "image": "https://cdn.optimuspay.io/stores/6966/theme/img_696da91fc806b2.89369199.webp",
+      "stars": 5,
+      "text": "Consegui sacar mais de 2 mil reais e paguei o meu aluguel, tiktok sempre salvando a gente quando mais precisamos, obrigado."
+    },
+    {
+      "name": "Fernando Oliveira",
+      "image": "https://cdn.optimuspay.io/stores/6966/theme/img_696da9203b9d41.47431713.webp",
+      "stars": 5,
+      "text": "obrigado tiktok, fiz o passo a passo certinho e o pix caiiu na minha conta."
+    }
+  ]
+}

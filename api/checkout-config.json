@@ -1,0 +1,66 @@
+{
+    "product_price": "68.98",
+    "product_name": "SUPER KIT - 12 Bombas de Banho Surpresas Oceânicas",
+    "product_description": "A Rainha dos Banhos Chegou",
+    "product_image": "http:\/\/localhost:8080\/finalrich\/checkout\/..\/uploads\/img_2026-04-05_00-52-02_69d1961272a60.png",
+    "company_name": "Compra Segura",
+    "company_logo": "https:\/\/cloudfox-digital-products.s3.amazonaws.com\/uploads\/user\/7YL9jZDV96gp4qm\/public\/stores\/nQ7kZ7nLVD30eJL\/logo\/MtvVsDb1gO3z97UxLtcWCwJjT6PMBUY582wIGX7d.png",
+    "is_digital": true,
+    "depoimentos_enabled": true,
+    "depoimentos": [
+        {
+            "name": "Correiosawdawdwada",
+            "description": "awdawd awd",
+            "image": "https:\/\/pay.eventottk.it.com\/_next\/image?url=https%3A%2F%2Fcdn.optimuspay.io%2Fstores%2F6966%2Ftheme%2Fimg_696da91fc806b2.89369199.webp&w=48&q=75ww"
+        },
+        {
+            "name": "Garantia de Reembolso",
+            "description": "Você tem até 15 dias para realizar trocas ou devoluções conforme a Políticas de Reembolso.",
+            "image": "https:\/\/pay.eventottk.it.com\/_next\/image?url=https%3A%2F%2Fcdn.optimuspay.io%2Fstores%2F6966%2Ftheme%2Fimg_696da9203b9d41.47431713.webp&w=48&q=75"
+        },
+        {
+            "name": "Reclame Aqui",
+            "description": "Somos uma empresa com ótima reputação no Reclame Aqui, sempre buscando a satisfação dos nossos clientes.",
+            "image": "https:\/\/plans-reviews.s3.amazonaws.com\/uploads\/user\/7YL9jZDV96gp4qm\/plans-reviews\/public\/phpHOE2OH.png"
+        }
+    ],
+    "last_updated": "2026-04-05 01:40:31",
+    "offers": {
+        "visible": false,
+        "items": []
+    },
+    "frete": {
+        "opcoes": [
+            {
+                "name": "awdad",
+                "description": "awd awdawdawd",
+                "price": "14,33",
+                "destaque": true,
+                "selected": true
+            },
+            {
+                "name": "zseedaw awddawd",
+                "description": "awdaw awdawd",
+                "price": "27,90",
+                "destaque": false,
+                "selected": false
+            }
+        ]
+    },
+    "colors": {
+        "principal": "#222222",
+        "hover": "#222222",
+        "secundaria": "#393939"
+    },
+    "show_safe_badge": true,
+    "safe_badge_image": "https:\/\/pay.controledavida.fun\/assets\/img\/safe-payment.svg?v=1773793484",
+    "contador": {
+        "enabled": false,
+        "text": "Esta oferta expira em",
+        "text_expired": "Oferta expirada!",
+        "minutes": 10,
+        "bg_color": "#1affd1",
+        "text_color": "#000000"
+    },
+    "show_company_logo": true
+}

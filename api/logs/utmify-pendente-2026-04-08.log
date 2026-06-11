@@ -1,0 +1,108 @@
+[2026-04-08 03:15:41] 📥 Dados recebidos do PayHubr
+Dados: {
+    "raw": "{\"orderId\":\"a63a9651-a9e4-481f-b2b4-04a1c1cebb07\",\"platform\":\"GhostsPay\",\"paymentMethod\":\"pix\",\"status\":\"waiting_payment\",\"createdAt\":\"2026-04-08 03:15:41\",\"approvedDate\":null,\"refundedAt\":null,\"customer\":{\"name\":\"Luiza Santos Ribeiro\",\"email\":\"clienteteste@gmail.com\",\"phone\":\"11999999999\",\"document\":\"91398176281\",\"country\":\"BR\",\"ip\":\"45.170.152.102\"},\"products\":[{\"id\":\"c282db42-52a3-4efb-8e30-8205aad6ea8f\",\"name\":\"Produto Checkout\",\"planId\":null,\"planName\":null,\"quantity\":1,\"priceInCents\":10000}],\"trackingParameters\":[],\"commission\":{\"totalPriceInCents\":10000,\"gatewayFeeInCents\":0,\"userCommissionInCents\":10000},\"isTest\":false}"
+}
+----------------------------------------
+[2026-04-08 03:15:41] 🔄 Processando dados recebidos
+Dados: {
+    "orderId": "a63a9651-a9e4-481f-b2b4-04a1c1cebb07",
+    "platform": "GhostsPay",
+    "paymentMethod": "pix",
+    "status": "waiting_payment",
+    "createdAt": "2026-04-08 03:15:41",
+    "approvedDate": null,
+    "refundedAt": null,
+    "customer": {
+        "name": "Luiza Santos Ribeiro",
+        "email": "clienteteste@gmail.com",
+        "phone": "11999999999",
+        "document": "91398176281",
+        "country": "BR",
+        "ip": "45.170.152.102"
+    },
+    "products": [
+        {
+            "id": "c282db42-52a3-4efb-8e30-8205aad6ea8f",
+            "name": "Produto Checkout",
+            "planId": null,
+            "planName": null,
+            "quantity": 1,
+            "priceInCents": 10000
+        }
+    ],
+    "trackingParameters": [],
+    "commission": {
+        "totalPriceInCents": 10000,
+        "gatewayFeeInCents": 0,
+        "userCommissionInCents": 10000
+    },
+    "isTest": false
+}
+----------------------------------------
+[2026-04-08 03:15:41] 📤 Dados formatados para Utmify
+Dados: {
+    "orderId": "a63a9651-a9e4-481f-b2b4-04a1c1cebb07",
+    "platform": "WeGate",
+    "paymentMethod": "pix",
+    "status": "waiting_payment",
+    "createdAt": "2026-04-08 03:15:41",
+    "approvedDate": null,
+    "refundedAt": null,
+    "customer": {
+        "name": "Luiza Santos Ribeiro",
+        "email": "clienteteste@gmail.com",
+        "phone": null,
+        "document": "91398176281",
+        "country": "BR",
+        "ip": "2a02:4780:13:1945:0:359d:9f86:1"
+    },
+    "products": [
+        {
+            "id": "c282db42-52a3-4efb-8e30-8205aad6ea8f",
+            "name": "Produto Checkout",
+            "planId": null,
+            "planName": null,
+            "quantity": 1,
+            "priceInCents": 10000
+        }
+    ],
+    "trackingParameters": {
+        "src": null,
+        "sck": null,
+        "utm_source": null,
+        "utm_campaign": null,
+        "utm_medium": null,
+        "utm_content": null,
+        "utm_term": null,
+        "xcod": null,
+        "fbclid": null,
+        "gclid": null,
+        "ttclid": null
+    },
+    "commission": {
+        "totalPriceInCents": 10000,
+        "gatewayFeeInCents": 0,
+        "userCommissionInCents": 10000
+    },
+    "isTest": false
+}
+----------------------------------------
+[2026-04-08 03:15:41] 📡 Enviando requisição para Utmify
+Dados: {
+    "url": "https:\/\/api.utmify.com.br\/api-credentials\/orders",
+    "headers": [
+        "Content-Type: application\/json",
+        "x-api-token: [REDACTED]"
+    ]
+}
+----------------------------------------
+[2026-04-08 03:15:41] ✅ Resposta da API Utmify
+Dados: {
+    "http_code": 200,
+    "response": {
+        "OK": true,
+        "data": [],
+        "result": "SUCCESS"
+    }
+}
+----------------------------------------

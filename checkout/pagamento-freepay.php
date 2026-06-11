@@ -1,0 +1,792 @@
+<?php
+// Headers já definidos pelo roteador pagamento.php
+// NÃO remova este comentário - evita redefinição de headers
+
+// Configurações de erro (sem headers)
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+error_reporting(E_ALL);
+
+// Define timezone para horário de Brasília
+date_default_timezone_set('America/Sao_Paulo');
+
+// ===== CAPTURA IP REAL DO CLIENTE (considerando proxy/CDN) =====
+function getClientIP() {
+    // Lista de possíveis headers que contêm o IP real do cliente
+    $headers = [
+        'HTTP_CF_CONNECTING_IP',    // Cloudflare
+        'HTTP_X_REAL_IP',            // Nginx proxy
+        'HTTP_X_FORWARDED_FOR',      // Proxy padrão
+        'HTTP_CLIENT_IP',            // Proxy
+        'REMOTE_ADDR'                // Fallback (IP direto ou do proxy)
+    ];
+    
+    foreach ($headers as $header) {
+        if (!empty($_SERVER[$header])) {
+            $ip = $_SERVER[$header];
+            
+            // Se for X-Forwarded-For, pode ter múltiplos IPs separados por vírgula
+            // Pega o PRIMEIRO IP (o cliente original)
+            if (strpos($ip, ',') !== false) {
+                $ips = explode(',', $ip);
+                $ip = trim($ips[0]);
+            }
+            
+            // Valida se é um IP válido
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                error_log("[IP] ✅ IP real capturado via $header: $ip");
+                return $ip;
+            }
+            
+            // Se não passou na validação acima, ainda aceita IPs privados (para testes locais)
+            if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                error_log("[IP] ⚠️ IP capturado via $header (pode ser privado): $ip");
+                return $ip;
+            }
+        }
+    }
+    
+    error_log("[IP] ❌ Não foi possível capturar IP do cliente");
+    return 'IP_DESCONHECIDO';
+}
+
+$client_ip = getClientIP();
+error_log("[IP] 🌐 IP detectado do cliente: $client_ip");
+
+// ===== CAPTURA IP E SALVA LOG IMEDIATAMENTE =====
+
+// Define caminho do log
+$logDir = __DIR__ . '/logs';
+$logFilePath = $logDir . '/pix-requests.log';
+
+// Cria diretório se não existir
+if (!file_exists($logDir)) {
+    $created = @mkdir($logDir, 0777, true);
+    if (!$created) {
+        error_log("[ERRO CRÍTICO] ❌ Não foi possível criar diretório: $logDir");
+    }
+}
+
+// Testa se pode escrever no diretório
+if (!is_writable($logDir)) {
+    error_log("[ERRO CRÍTICO] ❌ Diretório não tem permissão de escrita: $logDir");
+    @chmod($logDir, 0777);
+}
+
+// Salva log INICIAL com IP (nome será adicionado depois)
+$logLineInicial = date('Y-m-d H:i:s') . ' | IP: ' . $client_ip . ' | Status: REQUISIÇÃO INICIADA' . PHP_EOL;
+$bytes = @file_put_contents($logFilePath, $logLineInicial, FILE_APPEND | LOCK_EX);
+
+if ($bytes === false) {
+    error_log("[ERRO CRÍTICO] ❌ Falha ao escrever no arquivo de log: $logFilePath");
+    error_log("[ERRO CRÍTICO] 📁 Diretório existe? " . (file_exists($logDir) ? 'SIM' : 'NÃO'));
+    error_log("[ERRO CRÍTICO] 🔓 Diretório gravável? " . (is_writable($logDir) ? 'SIM' : 'NÃO'));
+} else {
+    error_log("[LOG TXT] ✅ Log inicial salvo com sucesso: $bytes bytes em $logFilePath");
+}
+// ===== FIM DO LOG INICIAL =====
+
+// Bloqueio de IPs específicos
+$blocked_ips = [
+    '2804:14d:8e85:8025:5184:a4d6:5ad1:4270',
+    '149.102.234.142',
+    // '192.168.1.100'
+];
+
+// Verifica se o IP do cliente está na lista de IPs bloqueados
+if (in_array($client_ip, $blocked_ips)) {
+    error_log("[BLOQUEIO] Acesso negado para IP bloqueado: " . $client_ip);
+    http_response_code(403);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Acesso negado'
+    ]);
+    exit;
+}
+
+// Função para gerar CPF válido
+function gerarCPF() {
+    $cpf = '';
+    for ($i = 0; $i < 9; $i++) {
+        $cpf .= rand(0, 9);
+    }
+
+    $soma = 0;
+    for ($i = 0; $i < 9; $i++) {
+        $soma += intval($cpf[$i]) * (10 - $i);
+    }
+    $resto = $soma % 11;
+    $digito1 = ($resto < 2) ? 0 : 11 - $resto;
+    $cpf .= $digito1;
+
+    $soma = 0;
+    for ($i = 0; $i < 10; $i++) {
+        $soma += intval($cpf[$i]) * (11 - $i);
+    }
+    $resto = $soma % 11;
+    $digito2 = ($resto < 2) ? 0 : 11 - $resto;
+    $cpf .= $digito2;
+
+    $invalidos = [
+        '00000000000', '11111111111', '22222222222', '33333333333', 
+        '44444444444', '55555555555', '66666666666', '77777777777', 
+        '88888888888', '99999999999'
+    ];
+
+    if (in_array($cpf, $invalidos)) {
+        return gerarCPF();
+    }
+
+    return $cpf;
+}
+
+// Função para obter o título baseado no valor do produto
+function getUpsellTitle($valor) {
+    // Mapeamento de valores para nomes de upsell
+    switch($valor) {
+        case 4790:
+            return 'Curso helton vieira';
+        case 2890:
+            return 'Taxa TENF';
+        case 4569:
+            return 'Taxa IOF';
+        case 8500:
+            return 'Taxa de Regularização';
+        case 1825:
+            return 'Validação Bancaria';
+        case 3990:
+            return 'Taxa de Validação';
+        case 5573:
+            return 'Front';
+        case 2490:
+            return 'Indenização Adicional';
+        case 6190:
+            return 'taxa';
+        default:
+            return 'Produto ' . ($valor/100);
+    }
+}
+
+try {
+    // Configurações da API FreePay Brasil
+    $apiUrl = 'https://api.freepaybrasil.com/v1/payment-transaction/create';
+    $publicKey = 'freepay_live_VdJqsDd7fSIiJAZZHZ9X66JtWmbpl7BS';
+    $secretKey = 'sk_live_KhkSfIWWUcC0yAQIWhLcAhcyYtXEXnP8';
+
+    // Conecta ao SQLite (arquivo de banco de dados na pasta checkout)
+    $dbPath = __DIR__ . '/database.sqlite';
+    $db = new PDO("sqlite:$dbPath");
+    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    
+    // Cria a tabela pedidos se ela não existir
+    $createTableSQL = "
+        CREATE TABLE IF NOT EXISTS pedidos (
+            transaction_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            valor INTEGER NOT NULL,
+            nome TEXT,
+            email TEXT,
+            cpf TEXT,
+            utm_params TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    ";
+    
+    $db->exec($createTableSQL);
+    
+    // Criar índices para melhor performance
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_pedidos_status ON pedidos(status)");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_pedidos_created_at ON pedidos(created_at)");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_pedidos_valor ON pedidos(valor)");
+    
+    error_log("[Pagamento] 🔌 Conectado ao banco de dados SQLite em: " . $dbPath);
+    error_log("[Pagamento] 📋 Tabela 'pedidos' verificada/criada com sucesso");
+
+    // Recebe dados JSON do body da requisição
+    $input = json_decode(file_get_contents('php://input'), true);
+    
+    // Recebe o valor da requisição (index.html envia JÁ EM CENTAVOS)
+    $valor_centavos = $input['valor'] ?? $_POST['valor'] ?? $_GET['valor'] ?? null;
+    
+    // Se não receber valor, usa o padrão
+    if (!$valor_centavos || $valor_centavos <= 0) {
+        $valor_centavos = 6990; // Valor padrão em centavos
+        error_log("[Pagamento] ⚠️ Valor não recebido, usando padrão: " . $valor_centavos . " centavos");
+    }
+    
+    $valor = $valor_centavos; // Mantém compatibilidade com código existente
+    error_log("[Pagamento] 💰 Valor recebido: " . $valor_centavos . " centavos (R$ " . number_format($valor_centavos/100, 2, ',', '.') . ")");
+
+    // Gera dados do cliente
+    $nomes_masculinos = [
+        'João', 'Pedro', 'Lucas', 'Miguel', 'Arthur', 'Gabriel', 'Bernardo', 'Rafael',
+        'Gustavo', 'Felipe', 'Daniel', 'Matheus', 'Bruno', 'Thiago', 'Carlos'
+    ];
+
+    $nomes_femininos = [
+        'Maria', 'Ana', 'Julia', 'Sofia', 'Isabella', 'Helena', 'Valentina', 'Laura',
+        'Alice', 'Manuela', 'Beatriz', 'Clara', 'Luiza', 'Mariana', 'Sophia'
+    ];
+
+    $sobrenomes = [
+        'Silva', 'Santos', 'Oliveira', 'Souza', 'Rodrigues', 'Ferreira', 'Alves', 
+        'Pereira', 'Lima', 'Gomes', 'Costa', 'Ribeiro', 'Martins', 'Carvalho', 
+        'Almeida', 'Lopes', 'Soares', 'Fernandes', 'Vieira', 'Barbosa'
+    ];
+
+    // Capturar dados reais do cliente - primeiro tenta do JSON, depois do POST/GET
+    $dadosReais = [
+        'nome' => $input['nome'] ?? $_POST['nome'] ?? $_GET['nome'] ?? null,
+        'email' => $input['email'] ?? $_POST['email'] ?? $_GET['email'] ?? null,
+        'cpf' => $input['cpf'] ?? $_POST['cpf'] ?? $_GET['cpf'] ?? null,
+        'telefone' => $input['telefone'] ?? $_POST['telefone'] ?? $_GET['telefone'] ?? null
+    ];
+    
+    // Parâmetros UTM - primeiro tenta do JSON, depois do POST
+    $utmParams = [
+        'utm_source' => $input['utm_source'] ?? $_POST['utm_source'] ?? $_GET['utm_source'] ?? null,
+        'utm_medium' => $input['utm_medium'] ?? $_POST['utm_medium'] ?? $_GET['utm_medium'] ?? null,
+        'utm_campaign' => $input['utm_campaign'] ?? $_POST['utm_campaign'] ?? $_GET['utm_campaign'] ?? null,
+        'utm_content' => $input['utm_content'] ?? $_POST['utm_content'] ?? $_GET['utm_content'] ?? null,
+        'utm_term' => $input['utm_term'] ?? $_POST['utm_term'] ?? $_GET['utm_term'] ?? null,
+        'xcod' => $input['xcod'] ?? $_POST['xcod'] ?? $_GET['xcod'] ?? null,
+        'sck' => $input['sck'] ?? $_POST['sck'] ?? $_GET['sck'] ?? null,
+        'src' => $input['src'] ?? $_POST['src'] ?? $_GET['src'] ?? null,
+        'utm_id' => $input['utm_id'] ?? $_POST['utm_id'] ?? $_GET['utm_id'] ?? null
+    ];
+
+    // Remove parâmetros vazios
+    $utmParams = array_filter($utmParams, function($value) {
+        return $value !== null && $value !== '';
+    });
+
+    error_log("[Pagamento] 👤 Dados reais recebidos: " . json_encode($dadosReais));
+    error_log("[Pagamento] 📊 Parâmetros UTM recebidos: " . json_encode($utmParams));
+
+    $utmQuery = http_build_query($utmParams);
+
+    // ===== VALIDAÇÃO E SANITIZAÇÃO DE SEGURANÇA =====
+    function sanitizeInput($input, $maxLength = 255) {
+        if (empty($input)) return null;
+        
+        // Remove espaços em branco extras
+        $input = trim($input);
+        
+        // Remove caracteres de controle e null bytes
+        $input = preg_replace('/[\x00-\x1F\x7F]/u', '', $input);
+        
+        // Limita o tamanho
+        $input = mb_substr($input, 0, $maxLength, 'UTF-8');
+        
+        return $input;
+    }
+
+    function validateNome($nome) {
+        // Sanitiza primeiro
+        $nome = sanitizeInput($nome, 100);
+        if (empty($nome)) return null;
+        
+        // Rejeita SQL injection patterns
+        $sqlPatterns = [
+            '/(\bUNION\b|\bSELECT\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bDROP\b|\bEXEC\b|\bEXECUTE\b)/i',
+            '/(\-\-|\/\*|\*\/|;)/i',  // Comentários SQL
+            '/(\bOR\b|\bAND\b)\s*[\'\"]?\d+[\'\"]?\s*=\s*[\'\"]?\d+/i', // OR 1=1, AND 1=1
+        ];
+        
+        foreach ($sqlPatterns as $pattern) {
+            if (preg_match($pattern, $nome)) {
+                error_log("[SECURITY ALERT] 🚨 SQL Injection attempt detected in nome: " . $nome);
+                return null; // Rejeita entrada maliciosa
+            }
+        }
+        
+        // Permite apenas letras, espaços, apóstrofos e hífens (nomes válidos)
+        if (!preg_match('/^[\p{L}\s\'\-]+$/u', $nome)) {
+            error_log("[SECURITY ALERT] ⚠️ Invalid character in nome: " . $nome);
+            return null;
+        }
+        
+        return $nome;
+    }
+
+    function validateEmail($email) {
+        $email = sanitizeInput($email, 255);
+        if (empty($email)) return null;
+        
+        // Validação básica de email
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            error_log("[SECURITY ALERT] ⚠️ Invalid email format: " . $email);
+            return null;
+        }
+        
+        return $email;
+    }
+
+    function validateCPF($cpf) {
+        $cpf = sanitizeInput($cpf, 14);
+        if (empty($cpf)) return null;
+        
+        // Remove tudo exceto números
+        $cpf = preg_replace('/\D/', '', $cpf);
+        
+        // Valida se tem 11 dígitos
+        if (strlen($cpf) !== 11) {
+            return null;
+        }
+        
+        return $cpf;
+    }
+    // ===== FIM DA VALIDAÇÃO DE SEGURANÇA =====
+
+    // Validar dados reais ANTES de usar
+    $dadosValidados = [
+        'nome' => validateNome($dadosReais['nome']),
+        'email' => validateEmail($dadosReais['email']),
+        'cpf' => validateCPF($dadosReais['cpf']),
+        'telefone' => !empty($dadosReais['telefone']) ? preg_replace('/\D/', '', $dadosReais['telefone']) : null
+    ];
+
+    // Log de segurança
+    if ($dadosReais['nome'] && !$dadosValidados['nome']) {
+        error_log("[SECURITY ALERT] 🚨 Nome rejeitado por validação: " . $dadosReais['nome']);
+    }
+    if ($dadosReais['email'] && !$dadosValidados['email']) {
+        error_log("[SECURITY ALERT] 🚨 Email rejeitado por validação: " . $dadosReais['email']);
+    }
+    if ($dadosReais['cpf'] && !$dadosValidados['cpf']) {
+        error_log("[SECURITY ALERT] 🚨 CPF rejeitado por validação: " . $dadosReais['cpf']);
+    }
+
+    // Usar dados reais se disponíveis E VÁLIDOS, senão gerar dados falsos como fallback
+    if (!empty($dadosValidados['nome']) && !empty($dadosValidados['cpf'])) {
+        // Usar dados reais VALIDADOS
+        $nome_cliente = $dadosValidados['nome'];
+        $cpf = $dadosValidados['cpf'];
+        $telefone = $dadosValidados['telefone'] ?: '11999999999';
+        
+        // Usa email validado ou gera baseado no nome
+        if (!empty($dadosValidados['email'])) {
+            $email = $dadosValidados['email'];
+            error_log("[Pagamento] 📧 Usando email REAL validado: " . $email);
+        } else {
+            $email = strtolower(str_replace([' ', '+'], ['.', '.'], $nome_cliente)) . '@email.com';
+            error_log("[Pagamento] 📧 Email gerado baseado no nome: " . $email);
+        }
+        
+        error_log("[Pagamento] ✅ Usando dados REAIS VALIDADOS do cliente: Nome: $nome_cliente, CPF: " . substr($cpf, 0, 3) . ".***.***-" . substr($cpf, -2));
+    } else {
+        // Gerar dados falsos como fallback
+        $genero = rand(0, 1);
+        $nome = $genero ? 
+            $nomes_masculinos[array_rand($nomes_masculinos)] : 
+            $nomes_femininos[array_rand($nomes_femininos)];
+        
+        $sobrenome1 = $sobrenomes[array_rand($sobrenomes)];
+        $sobrenome2 = $sobrenomes[array_rand($sobrenomes)];
+        
+        $nome_cliente = "$nome $sobrenome1 $sobrenome2";
+        $email = strtolower(str_replace(' ', '.', $nome_cliente)) . '@email.com';
+        $cpf = gerarCPF();
+        $telefone = '11999999999';
+        
+        error_log("[Pagamento] ⚠️ Usando dados FALSOS como fallback: Nome: $nome_cliente, CPF: $cpf, Telefone: $telefone");
+    }
+
+    // Obtém o título do produto baseado no valor
+    $produtoTitulo = getUpsellTitle($valor_centavos);
+    error_log("[Pagamento] 🏷️ Título do produto: " . $produtoTitulo);
+
+    // ===== ATUALIZA LOG TXT COM NOME DO CLIENTE =====
+    $logLineCompleto = date('Y-m-d H:i:s') . ' | IP: ' . $client_ip . ' | Nome: ' . $nome_cliente . ' | Valor: R$ ' . number_format($valor_centavos/100, 2, ',', '.') . PHP_EOL;
+    $bytes = @file_put_contents($logFilePath, $logLineCompleto, FILE_APPEND | LOCK_EX);
+    
+    if ($bytes === false) {
+        error_log("[LOG TXT] ❌ ERRO ao salvar log completo");
+    } else {
+        error_log("[LOG TXT] ✅ Log completo salvo: IP=$client_ip | Nome=$nome_cliente | Bytes: $bytes");
+        error_log("[LOG TXT] 📂 Arquivo: $logFilePath");
+    }
+    // ===== FIM DO LOG COMPLETO =====
+
+    // Parâmetros UTM
+    $utmParams = [
+        'utm_source' => $jsonData['utm_source'] ?? null,
+        'utm_medium' => $jsonData['utm_medium'] ?? null,
+        'utm_campaign' => $jsonData['utm_campaign'] ?? null,
+        'utm_content' => $jsonData['utm_content'] ?? null,
+        'utm_term' => $jsonData['utm_term'] ?? null,
+        'xcod' => $jsonData['xcod'] ?? null,
+        'sck' => $jsonData['sck'] ?? null
+    ];
+
+    $utmParams = array_filter($utmParams, function($value) {
+        return $value !== null && $value !== '';
+    });
+
+    error_log("[Pagamento] 📊 Parâmetros UTM recebidos: " . json_encode($utmParams));
+
+    $utmQuery = http_build_query($utmParams);
+
+    // Usa os dados enviados pelo formulário, se disponíveis, senão gera dados falsos como fallback
+    // Verifica pelos nomes corretos dos campos enviados pelo JavaScript
+    if (isset($jsonData['name']) && !empty($jsonData['name'])) {
+        $nome_cliente = $jsonData['name'];
+        error_log("[Pagamento] 📝 Usando nome do cliente enviado via FormData: " . $nome_cliente);
+    } elseif (isset($jsonData['nome']) && !empty($jsonData['nome'])) {
+        $nome_cliente = $jsonData['nome'];
+        error_log("[Pagamento] 📝 Usando nome do cliente enviado via JSON: " . $nome_cliente);
+    } else {
+        // Gera dados falsos como fallback
+        $genero = rand(0, 1);
+        $nome = $genero ? 
+            $nomes_masculinos[array_rand($nomes_masculinos)] : 
+            $nomes_femininos[array_rand($nomes_femininos)];
+        
+        $sobrenome1 = $sobrenomes[array_rand($sobrenomes)];
+        $sobrenome2 = $sobrenomes[array_rand($sobrenomes)];
+        
+        $nome_cliente = "$nome $sobrenome1 $sobrenome2";
+        error_log("[Pagamento] 📝 Usando nome falso gerado como fallback: " . $nome_cliente);
+    }
+
+    if (isset($jsonData['email']) && !empty($jsonData['email'])) {
+        $email = $jsonData['email'];
+        error_log("[Pagamento] 📝 Usando email do cliente enviado: " . $email);
+    } else {
+        $email = "clienteteste@gmail.com";
+        error_log("[Pagamento] 📝 Usando email falso como fallback: " . $email);
+    }
+
+    if (isset($jsonData['document']) && !empty($jsonData['document'])) {
+        $cpf = preg_replace('/[^0-9]/', '', $jsonData['document']);
+        error_log("[Pagamento] 📝 Usando CPF do cliente enviado via FormData: " . $cpf);
+    } elseif (isset($jsonData['cpf']) && !empty($jsonData['cpf'])) {
+        $cpf = preg_replace('/[^0-9]/', '', $jsonData['cpf']);
+        error_log("[Pagamento] 📝 Usando CPF do cliente enviado via JSON: " . $cpf);
+    } else {
+        $cpf = gerarCPF();
+        error_log("[Pagamento] 📝 Usando CPF falso gerado como fallback: " . $cpf);
+    }
+
+    if (isset($jsonData['telephone']) && !empty($jsonData['telephone'])) {
+        $telefone = preg_replace('/[^0-9]/', '', $jsonData['telephone']);
+        // Remove o prefixo 55 se estiver no início e o número tiver mais de 11 dígitos
+        if (strlen($telefone) > 11 && substr($telefone, 0, 2) === '55') {
+            $telefone = substr($telefone, 2);
+        }
+        error_log("[Pagamento] 📝 Usando telefone do cliente enviado via FormData: " . $telefone);
+    } elseif (isset($jsonData['telefone']) && !empty($jsonData['telefone'])) {
+        $telefone = preg_replace('/[^0-9]/', '', $jsonData['telefone']);
+        // Remove o prefixo 55 se estiver no início e o número tiver mais de 11 dígitos
+        if (strlen($telefone) > 11 && substr($telefone, 0, 2) === '55') {
+            $telefone = substr($telefone, 2);
+        }
+        error_log("[Pagamento] 📝 Usando telefone do cliente enviado via JSON: " . $telefone);
+    } else {
+        $telefone = "11999999999";
+        error_log("[Pagamento] 📝 Usando telefone falso como fallback: " . $telefone);
+    }
+
+    // Configurações da API FreePay Brasil
+    $apiUrl = 'https://api.freepaybrasil.com/v1/payment-transaction/create';
+    $publicKey = 'freepay_live_k1whMcKvLV3PbclMeTkTmzebc5lmD2Qn'; // Public Key
+    $secretKey = 'sk_live_9qR3GSoBHSzwLlyx7NyJE5cRSFYWAOh3'; // Secret Key
+
+    error_log("[FreePay] 📝 Preparando dados para envio: " . json_encode([
+        'valor_centavos' => $valor_centavos,
+        'nome' => $nome_cliente,
+        'email' => $email,
+        'cpf' => $cpf,
+        'telefone' => $telefone
+    ]));
+
+    // Cria o payload para a API FreePay Brasil
+    $externalRef = 'REF-' . time() . '-' . rand(1000, 9999);
+    $serverUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://$_SERVER[HTTP_HOST]";
+    $currentDir = dirname($_SERVER['REQUEST_URI']);
+    $postbackUrl = $serverUrl . $currentDir . "/webhook-freepay.php";
+
+    $data = [
+        "payment_method" => "pix",
+        "amount" => $valor_centavos,
+        "postback_url" => $postbackUrl,
+        "ip" => $client_ip,
+        "customer" => [
+            "name" => $nome_cliente,
+            "email" => $email,
+            "phone" => $telefone,
+            "document" => [
+                "type" => "CPF",
+                "number" => $cpf
+            ]
+        ],
+        "items" => [
+            [
+                "title" => $produtoTitulo,
+                "quantity" => 1,
+                "unitPrice" => $valor_centavos
+            ]
+        ],
+        "pix" => [
+            "expiresInDays" => 1
+        ],
+        "metadata" => [
+            "utm_params" => $utmParams,
+            "checkout_url" => "https://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'],
+            "referrer_url" => isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : '',
+            "externalRef" => $externalRef,
+            "provider_name" => "FreePay Brasil"
+        ]
+    ];
+
+    // Adiciona tracking se houver parâmetros UTM
+    if (!empty($utmParams)) {
+        $data['tracking'] = $utmParams;
+    }
+
+    error_log("[FreePay] 🌐 URL da requisição: " . $apiUrl);
+    error_log("[FreePay] 📦 Dados enviados: " . json_encode($data));
+
+    // Prepara a autenticação Basic Auth (PUBLIC_KEY:SECRET_KEY)
+    $auth = base64_encode($publicKey . ':' . $secretKey);
+
+    $ch = curl_init($apiUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Basic ' . $auth,
+        'Content-Type: application/json'
+    ]);
+    
+    // Configurações para seguir redirecionamentos
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    
+    // Configurações SSL
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+    
+    // User Agent para evitar bloqueios
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+
+    curl_setopt($ch, CURLOPT_VERBOSE, true);
+    $verbose = fopen('php://temp', 'w+');
+    curl_setopt($ch, CURLOPT_STDERR, $verbose);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    $curlErrno = curl_errno($ch);
+    
+    // Informações adicionais sobre redirecionamentos
+    $redirectCount = curl_getinfo($ch, CURLINFO_REDIRECT_COUNT);
+    $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+    
+    error_log("[FreePay] 🔄 Redirecionamentos: " . $redirectCount);
+    error_log("[FreePay] 🎯 URL final: " . $effectiveUrl);
+
+    rewind($verbose);
+    $verboseLog = stream_get_contents($verbose);
+    error_log("[FreePay] 🔍 Detalhes da requisição cURL:\n" . $verboseLog);
+
+    if ($curlError) {
+        error_log("[FreePay] ❌ Erro cURL: " . $curlError . " (errno: " . $curlErrno . ")");
+        throw new Exception("Erro na requisição: " . $curlError);
+    }
+
+    curl_close($ch);
+
+    error_log("[FreePay] 📊 HTTP Status Code: " . $httpCode);
+    error_log("[FreePay] 📄 Resposta bruta: " . $response);
+
+    // Aceita códigos de sucesso (200-299)
+    if ($httpCode < 200 || $httpCode >= 300) {
+        $errorMsg = "Erro na API: HTTP " . $httpCode;
+        if (!empty($response)) {
+            $errorMsg .= " - " . $response;
+        }
+        throw new Exception($errorMsg);
+    }
+
+    $result = json_decode($response, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        throw new Exception("Erro ao decodificar resposta: " . json_last_error_msg() . " - Resposta: " . $response);
+    }
+
+    // Adapta a resposta da FreePay Brasil para o formato esperado pelo frontend
+    $transactionId = $result['data']['id'] ?? $result['id'] ?? null;
+    $pixCode = $result['data']['pix']['qr_code'] ?? $result['pix']['qr_code'] ?? null;
+
+    // Depuração detalhada da resposta para identificar onde está o código PIX
+    error_log("[FreePay] 🔍 Estrutura da resposta: " . print_r($result, true));
+    
+    // Tenta encontrar o código PIX em diferentes locais possíveis na resposta da FreePay
+    if (!$pixCode) {
+        if (isset($result['data']) && isset($result['data']['pix'])) {
+            $pixCode = $result['data']['pix']['qr_code'] ?? $result['data']['pix']['e2_e'] ?? null;
+            error_log("[FreePay] 🔍 Tentando extrair pixCode de data.pix: " . $pixCode);
+        } elseif (isset($result['pix'])) {
+            $pixCode = $result['pix']['qr_code'] ?? $result['pix']['e2_e'] ?? null;
+            error_log("[FreePay] 🔍 Tentando extrair pixCode de pix: " . $pixCode);
+        } elseif (isset($result['qr_code'])) {
+            $pixCode = $result['qr_code'];
+            error_log("[FreePay] 🔍 Tentando extrair pixCode de qr_code: " . $pixCode);
+        }
+    }
+
+    if (!$transactionId) {
+        throw new Exception("Transaction ID não encontrado na resposta da API");
+    }
+
+    // Salva os dados no SQLite usando INSERT OR REPLACE para permitir atualização de IDs duplicados
+    $stmt = $db->prepare("INSERT OR REPLACE INTO pedidos (transaction_id, status, valor, nome, email, cpf, utm_params, created_at, updated_at) 
+        VALUES (:transaction_id, 'pending', :valor, :nome, :email, :cpf, :utm_params, :created_at, :updated_at)");
+    $stmt->execute([
+        'transaction_id' => $transactionId,
+        'valor' => $valor_centavos,
+        'nome' => $nome_cliente,
+        'email' => $email,
+        'cpf' => $cpf,
+        'utm_params' => json_encode($utmParams),
+        'created_at' => date('c'),
+        'updated_at' => date('c')
+    ]);
+    
+    error_log("[Pagamento] 💾 Dados salvos/atualizados no banco SQLite com transaction_id: " . $transactionId);
+
+    session_start();
+    $_SESSION['payment_id'] = $transactionId;
+
+    error_log("[FreePay] 💳 Transação criada com sucesso: " . $transactionId);
+    error_log("[FreePay] 📄 Resposta completa da API: " . $response);
+    error_log("[FreePay] 🔑 Token gerado: " . $transactionId);
+
+    error_log("[Sistema] 📡 Iniciando comunicação com utmify-pendente.php");
+
+    $utmifyData = [
+        'orderId' => $transactionId,
+        'platform' => 'MinhaPlataforma',
+        'paymentMethod' => 'pix',
+        'status' => 'waiting_payment',
+        'createdAt' => date('Y-m-d H:i:s'),
+        'approvedDate' => null,
+        'refundedAt' => null,
+        'customer' => [
+            'name' => $nome_cliente,
+            'email' => $email,
+            'phone' => $telefone,
+            'document' => $cpf,
+            'country' => 'BR',
+            'ip' => $client_ip
+        ],
+        'products' => [
+            [
+                'id' => uniqid('PROD_'),
+                'name' => $produtoTitulo,
+                'planId' => null,
+                'planName' => null,
+                'quantity' => 1,
+                'priceInCents' => $valor_centavos
+            ]
+        ],
+        'trackingParameters' => $utmParams,
+        'commission' => [
+            'totalPriceInCents' => $valor_centavos,
+            'gatewayFeeInCents' => 0,
+            'userCommissionInCents' => $valor_centavos
+        ],
+        'isTest' => false
+    ];
+
+    error_log("[Utmify] 📦 Preparando dados para envio ao utmify-pendente.php: " . json_encode($utmifyData));
+
+    $serverUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://$_SERVER[HTTP_HOST]";
+    $currentDir = dirname($_SERVER['REQUEST_URI']);
+    $utmifyUrl = $serverUrl . $currentDir . "/utmify-pendente.php";
+    error_log("[Sistema] 🌐 URL Utmify pendente construída dinamicamente: " . $utmifyUrl);
+    
+    $ch = curl_init($utmifyUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($utmifyData),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => false
+    ]);
+
+    $utmifyResponse = curl_exec($ch);
+    $utmifyHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $utmifyError = curl_error($ch);
+    $utmifyErrno = curl_errno($ch);
+    
+    error_log("[Sistema] 🔍 Detalhes da requisição Utmify: " . print_r([
+        'url' => $utmifyUrl,
+        'status' => $utmifyHttpCode,
+        'resposta' => $utmifyResponse,
+        'erro' => $utmifyError,
+        'errno' => $utmifyErrno
+    ], true));
+    
+    curl_close($ch);
+
+    error_log("[Sistema] ✉️ Resposta do utmify-pendente.php: " . $utmifyResponse);
+    error_log("[Sistema] 📊 Status code do utmify-pendente.php: " . $utmifyHttpCode);
+
+    if ($utmifyHttpCode !== 200) {
+        error_log("[Sistema] ❌ Erro ao enviar dados para utmify-pendente.php: " . $utmifyResponse);
+    } else {
+        error_log("[Sistema] ✅ Dados enviados com sucesso para utmify-pendente.php");
+    }
+
+    // Gera URL do QR Code se não vier da API
+    $qrCodeUrl = $result['qr_code_base64'] ?? null;
+    
+    // Se não tiver QR Code e tiver o código PIX, gera via API pública
+    if (empty($qrCodeUrl) && !empty($pixCode)) {
+        $qrCodeUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' . urlencode($pixCode);
+        error_log("[FreePay] 🔄 QR Code gerado via API externa: " . $qrCodeUrl);
+    }
+
+    // Preparar resposta
+    $responseData = [
+        'success' => true,
+        'token' => $transactionId,
+        'pixCode' => $pixCode,
+        'pixCopiaECola' => $pixCode, // Adiciona o campo que o frontend espera
+        'qrCodeUrl' => $qrCodeUrl, // QR Code gerado ou da API
+        'valor' => $valor,
+        'expires_at' => $result['expires_at'] ?? null,
+        'logs' => [
+            'utmParams' => $utmParams,
+            'transacao' => [
+                'valor' => $valor,
+                'cliente' => $nome_cliente,
+                'email' => $email,
+                'cpf' => $cpf,
+                'reference' => $externalRef
+            ],
+            'utmifyResponse' => [
+                'status' => $utmifyHttpCode,
+                'resposta' => $utmifyResponse
+            ]
+        ]
+    ];
+
+    error_log("[FreePay] 📤 Enviando resposta ao frontend: " . json_encode($responseData));
+    echo json_encode($responseData);
+
+} catch (Exception $e) {
+    error_log("[FreePay] ❌ Erro: " . $e->getMessage());
+    error_log("[FreePay] 🔍 Stack trace: " . $e->getTraceAsString());
+    
+    echo json_encode([
+        'success' => false,
+        'message' => 'Erro ao gerar o PIX: ' . $e->getMessage()
+    ]);
+}
+?>
